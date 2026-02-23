@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>阿胖早點｜早餐系統 Pro 版</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+.nav-btn{padding:6px 14px;border-radius:8px}
+.nav-btn.active{background:white;color:#dc2626;font-weight:bold}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:50}
+.modal{background:white;padding:20px;border-radius:12px;min-width:300px}
+.card-served{background:#eff6ff;border:2px solid #3b82f6;}
+.card-normal{background:white;border:2px solid #e5e7eb;}
+</style>
+</head>
+<body class="bg-gray-100">
+
+<script>
+const GAS_API_URL="https://script.google.com/macros/s/AKfycbyZ91St7vQUseH17_xYXl6o8io0G8kN1GQPxcLKBHNR2oY8omw1_TvrEdPNFy_NQ_LU/exec";
+let PASSWORD="";
+let editRow=null;
+let refreshTimer=null;
+let processingTables={};
+</script>
+
+<!-- 登入 -->
+<div id="login" class="fixed inset-0 bg-red-600 flex items-center justify-center">
+<div class="bg-white p-8 rounded-2xl w-80">
+<h2 class="text-xl font-bold text-center mb-4">管理登入</h2>
+<input id="pwd" type="password" class="w-full border p-2 mb-4 rounded" onkeypress="if(event.key==='Enter'){login();}">
+<button onclick="login()" class="w-full bg-red-600 text-white p-2 rounded">登入</button>
+<div id="msg" class="text-red-500 text-center mt-2"></div>
+</div>
+</div>
+
+<div id="admin" class="hidden">
+
+<header class="bg-red-600 text-white p-4 flex justify-between">
+<h1>阿胖早點｜早餐系統 Pro 版</h1>
+<div>
+<button id="btn-orders" onclick="switchTab('orders')" class="nav-btn active">訂單管理</button>
+<button id="btn-history" onclick="switchTab('history')" class="nav-btn">訂單總表</button>
+<button id="btn-menu" onclick="switchTab('menu')" class="nav-btn">菜單管理</button>
+</div>
+</header>
+
+<div class="p-6">
+
+<!-- 訂單管理 -->
+<section id="orders">
+<div class="flex justify-between mb-4">
+<h2 class="font-bold text-lg">即時訂單</h2>
+<button onclick="loadOrderCards()" class="bg-white border px-3 py-1 rounded">手動刷新</button>
+</div>
+<div id="orderCards" class="grid md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+</section>
+
+<!-- 訂單總表 -->
+<section id="history" class="hidden">
+<div class="flex justify-end mb-2">
+<button onclick="clearAllOrders()" class="bg-red-600 text-white px-3 py-1 rounded">全部刪除</button>
+</div>
+<table class="w-full bg-white shadow rounded">
+<thead class="bg-gray-200">
+<tr>
+<th>日期時間</th>
+<th>品項</th>
+<th>單價</th>
+<th>數量</th>
+<th>小計</th>
+<th>桌號</th>
+<th>狀態</th>
+<th>操作</th>
+</tr>
+</thead>
+<tbody id="orderBody"></tbody>
+</table>
+</section>
+
+<!-- 菜單管理 -->
+<section id="menu" class="hidden">
+<button onclick="addMenu()" class="mb-3 bg-green-600 text-white px-3 py-1 rounded">新增</button>
+<table class="w-full bg-white shadow rounded">
+<thead class="bg-gray-200">
+<tr><th>分類</th><th>名稱</th><th>描述</th><th>價格</th><th>操作</th></tr>
+</thead>
+<tbody id="menuBody"></tbody>
+</table>
+</section>
+
+</div>
+</div>
+
+<!-- 編輯彈窗 -->
+<div id="editModal" class="modal-bg hidden">
+<div class="modal">
+<h3 class="text-lg font-bold mb-2">編輯菜單</h3>
+<table class="w-full mb-3">
+<tr><td>分類</td><td><input id="modalCategory" class="border p-1 w-full"></td></tr>
+<tr><td>名稱</td><td><input id="modalName" class="border p-1 w-full"></td></tr>
+<tr><td>描述</td><td><input id="modalDesc" class="border p-1 w-full"></td></tr>
+<tr><td>價格</td><td><input id="modalPrice" type="number" class="border p-1 w-full"></td></tr>
+</table>
+<div class="flex justify-end gap-2">
+<button onclick="confirmEdit()" class="bg-green-600 text-white px-3 py-1 rounded">確認</button>
+<button onclick="cancelEdit()" class="bg-gray-400 text-white px-3 py-1 rounded">取消</button>
+</div>
+</div>
+</div>
+
+<script>
+
+// API
+async function api(payload){
+  payload.password=PASSWORD;
+  const res=await fetch(GAS_API_URL,{
+    method:"POST",
+    headers:{"Content-Type":"text/plain"},
+    body:JSON.stringify(payload)
+  });
+  return await res.json();
+}
+
+// 登入
+async function login(){
+  PASSWORD=document.getElementById("pwd").value;
+  const res=await api({action:"adminLogin"});
+  if(res.ok){
+    document.getElementById("login").classList.add("hidden");
+    document.getElementById("admin").classList.remove("hidden");
+    startAutoRefresh();
+    loadOrderCards();
+  }else{
+    document.getElementById("msg").innerText="密碼錯誤";
+  }
+}
+
+// 分頁
+function switchTab(tab){
+  ["orders","history","menu"].forEach(t=>{
+    document.getElementById(t).classList.add("hidden");
+    document.getElementById("btn-"+t).classList.remove("active");
+  });
+  document.getElementById(tab).classList.remove("hidden");
+  document.getElementById("btn-"+tab).classList.add("active");
+
+  if(tab==="orders"){ startAutoRefresh(); loadOrderCards(); }
+  else{ stopAutoRefresh(); }
+
+  if(tab==="history") loadOrders();
+  if(tab==="menu") loadMenu();
+}
+
+// 自動刷新
+function startAutoRefresh(){
+  stopAutoRefresh();
+  refreshTimer=setInterval(loadOrderCards,10000);
+}
+function stopAutoRefresh(){
+  if(refreshTimer) clearInterval(refreshTimer);
+}
+
+// 訂單管理
+async function loadOrderCards(){
+  const res=await api({action:"getOrderHistory"});
+  if(!res.ok) return;
+
+  const grouped={};
+
+  res.data.forEach(r=>{
+    if(r.status==="completed") return;
+    if(!grouped[r.table]) grouped[r.table]={items:[],status:r.status};
+    grouped[r.table].items.push(r);
+  });
+
+  const tables=Object.keys(grouped).sort((a,b)=>Number(a)-Number(b));
+  const root=document.getElementById("orderCards");
+  root.innerHTML="";
+
+  tables.forEach(table=>{
+    const data=grouped[table];
+    const total=data.items.reduce((s,i)=>s+Number(i.subtotal),0);
+    const isServed=data.status==="served";
+    const btnText=isServed?"💰 結帳":"🚚 送餐";
+    const newStatus=isServed?"completed":"served";
+    const cardClass=isServed?"card-served":"card-normal";
+
+    root.innerHTML+=`
+    <div class="${cardClass} p-4 rounded shadow">
+      <div class="flex justify-between mb-2">
+        <h3 class="font-bold text-lg">桌號 ${table}</h3>
+        <button id="btn-${table}" 
+        onclick="handleStatus('${table}','${newStatus}',${total})"
+        class="bg-${isServed?'blue':'green'}-600 text-white px-3 py-1 rounded">
+        ${btnText}
+        </button>
+      </div>
+      ${data.items.map(i=>`
+        <div class="flex justify-between text-sm">
+          <span>${i.name} x ${i.qty}</span>
+          <span>$${i.subtotal}</span>
+        </div>`).join("")}
+      <div class="text-right font-bold text-red-600 mt-2">總計 $${total}</div>
+    </div>`;
+  });
+}
+
+// 狀態處理
+async function handleStatus(table,newStatus,total){
+
+  if(processingTables[table]) return;
+  processingTables[table]=true;
+
+  if(newStatus==="completed"){
+    if(!confirm(`確定結帳？\n桌號 ${table}\n金額 $${total}`)){
+      processingTables[table]=false;
+      return;
+    }
+  }
+
+  document.getElementById("btn-"+table).disabled=true;
+
+  const res=await api({action:"getOrderHistory"});
+  const rows=res.data.filter(r=>r.table==table && r.status!=="completed");
+
+  for(const r of rows){
+    if(newStatus==="served" && r.status==="completed") continue;
+    await api({action:"editOrderStatus",row:r.row,status:newStatus});
+  }
+
+  processingTables[table]=false;
+  loadOrderCards();
+  loadOrders();
+}
+
+// 訂單總表
+async function loadOrders(){
+  const res=await api({action:"getOrderHistory"});
+  if(!res.ok)return;
+  document.getElementById("orderBody").innerHTML=res.data.map(r=>`
+<tr>
+<td>${new Date(r.time).toLocaleString()}</td>
+<td>${r.name}</td>
+<td>${r.price}</td>
+<td>${r.qty}</td>
+<td>${r.subtotal}</td>
+<td>${r.table}</td>
+<td>${r.status}</td>
+<td><button class="bg-red-500 text-white px-2 py-1 rounded" onclick="deleteOrder(${r.row})">刪除</button></td>
+</tr>`).join("");
+}
+
+// 單筆刪除
+async function deleteOrder(row){
+  if(!confirm("確定刪除?")) return;
+  await api({action:"deleteOrder",row});
+  loadOrders();
+}
+
+// 新增：全部刪除
+async function clearAllOrders(){
+  if(!confirm("確定清除所有訂單資料？此操作無法復原！")) return;
+  await api({action:"clearAllOrders"});
+  loadOrders();
+  loadOrderCards();
+}
+
+// 菜單管理（完全保留）
+async function loadMenu(){
+  const res=await api({action:"getMenu"});
+  if(!res.ok)return;
+  document.getElementById("menuBody").innerHTML=res.data.map(m=>`
+<tr>
+<td>${m.category}</td>
+<td>${m.name}</td>
+<td>${m.desc}</td>
+<td>${m.price}</td>
+<td>
+<button onclick="showEditModal(${m.row},'${m.category}','${m.name}','${m.desc}',${m.price})" class="bg-yellow-500 text-white px-2 py-1 rounded">編輯</button>
+<button onclick="deleteMenu(${m.row})" class="bg-red-500 text-white px-2 py-1 rounded">刪除</button>
+</td>
+</tr>`).join("");
+}
+
+function addMenu(){showEditModal(null,"","","",0);}
+function showEditModal(row,c,n,d,p){
+  editRow=row;
+  modalCategory.value=c;
+  modalName.value=n;
+  modalDesc.value=d;
+  modalPrice.value=p;
+  editModal.classList.remove("hidden");
+}
+async function confirmEdit(){
+  if(editRow)
+    await api({action:"editMenuItem",row:editRow,category:modalCategory.value,name:modalName.value,desc:modalDesc.value,price:modalPrice.value});
+  else
+    await api({action:"addMenuItem",category:modalCategory.value,name:modalName.value,desc:modalDesc.value,price:modalPrice.value});
+  cancelEdit(); loadMenu();
+}
+function cancelEdit(){editModal.classList.add("hidden");}
+async function deleteMenu(row){
+  if(!confirm("確定刪除?"))return;
+  await api({action:"deleteMenuItem",row});
+  loadMenu();
+}
+</script>
+
+</body>
+</html>
